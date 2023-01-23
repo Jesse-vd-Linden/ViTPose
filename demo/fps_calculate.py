@@ -509,7 +509,7 @@ def display():
     event_exit.set()
 
 
-def main():
+def main(config):
     global args
     global frame_buffer
     global input_queue, input_queue_mutex
@@ -532,8 +532,8 @@ def main():
     pose_model_list = []
     if args.enable_human_pose:
         pose_model = init_pose_model(
-            args.human_pose_config,
-            args.human_pose_checkpoint,
+            config["config"],
+            config["checkpoint"],
             device=args.device.lower())
         model_info = {
             'name': 'HumanPose',
@@ -594,4 +594,37 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    models_to_test = {
+        "vitpose_small":{
+            "checkpoint": "pytorch-checkpoint-models/vitpose_small.pth",
+            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/ViTPose_small_coco_256x192.py"
+        },
+        "hrnet-w48":{
+            "checkpoint": "pytorch-checkpoint-models/pose_hrnet_w48_256x192.pth",
+            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrnet_w48_coco_256x192_dark.py"
+        },
+        "hrnet-w32":{
+            "checkpoint": "pytorch-checkpoint-models/pose_hrnet_w32_256x192.pth",
+            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrnet_w32_coco_256x192_dark.py"
+        },
+        "vipnas-wholebody":{
+            "checkpoint": "https://download.openmmlab.com/mmpose/top_down/vipnas/vipnas_res50_wholebody_256x192_dark-67c0ce35_20211112.pth",
+            "config": "configs/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/vipnas_res50_coco_wholebody_256x192_dark.py"
+        },
+        "vitpose-b":{
+            "checkpoint": "pytorch-checkpoint-models/vitpose-b.pth",
+            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/ViTPose_base_coco_256x192.py"
+        },
+        "vitpose-l":{
+            "checkpoint": "pytorch-checkpoint-models/vitpose-l.pth",
+            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/ViTPose_large_coco_256x192.py"
+        },
+    }
+
+    for key in models_to_test.keys():
+        config = models_to_test[key]
+        print(key)
+        print(config)
+        print(config["checkpoint"])
+
+        main(config)
