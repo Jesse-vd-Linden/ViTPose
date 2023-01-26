@@ -3,11 +3,16 @@ import matplotlib.pyplot as plt
 
 import argparse
 import time
+import sys, os
+import pickle
 from collections import deque
 from queue import Queue
 from threading import Event, Lock, Thread
 import cv2
 import numpy as np
+
+from tqdm import tqdm
+from pprint import pprint
 
 from mmpose.apis import (get_track_id, inference_top_down_pose_model,
                          init_pose_model, vis_pose_result)
@@ -15,6 +20,8 @@ from mmpose.core import apply_bugeye_effect, apply_sunglasses_effect
 from mmpose.utils import StopWatch
 
 from visualize_results import visualize_pose
+
+import matplotlib.pyplot as plts
 
 
 try:
@@ -28,6 +35,9 @@ try:
     psutil_proc = psutil.Process()
 except (ImportError, ModuleNotFoundError):
     psutil_proc = None
+
+global inference_data
+inference_data = {}
 
 
 def parse_args():
@@ -124,7 +134,7 @@ def parse_args():
     parser.add_argument(
         '--out-video-fps',
         type=int,
-        default=120,
+        default=250,
         help='Set the FPS of the output video file.')
 
     parser.add_argument(
@@ -137,7 +147,7 @@ def parse_args():
     parser.add_argument(
         '--inference-fps',
         type=int,
-        default=30,
+        default=250,
         help='Maximum inference FPS. This is to limit the resource consuming '
         'especially when the detection and pose model are lightweight and '
         'very fast. Default: 10.')
@@ -158,7 +168,6 @@ def parse_args():
         'temporally aligned. Note that this will reduce the display FPS.')
 
     return parser.parse_args()
-
 
 def process_mmdet_results(mmdet_results, class_names=None, cat_ids=1):
     """Process mmdet results to mmpose input format.
@@ -196,14 +205,15 @@ def process_mmdet_results(mmdet_results, class_names=None, cat_ids=1):
         det_results.append(det_result)
     return det_results
 
-
 def read_camera():
     # init video reader
     print('Thread "input" started')
     cam_id = args.cam_id
     if cam_id.isdigit():
         cam_id = int(cam_id)
+    global vid_cap
     vid_cap = cv2.VideoCapture(cam_id)
+
     if not vid_cap.isOpened():
         print(f'Cannot open camera (ID={cam_id})')
         exit()
@@ -228,7 +238,7 @@ def read_camera():
             break
 
     vid_cap.release()
-
+    print(vid_cap.isOpened())
 
 def inference_detection():
     print('Thread "det" started')
@@ -255,16 +265,21 @@ def inference_detection():
             time.sleep(min_interval - _ts + _ts_last)
         _ts_last = time.time()
 
-
-def inference_pose():
+def inference_pose(key):
     print('Thread "pose" started')
     stop_watch = StopWatch(window=10)
+    inference_data[key] = {"inference count": 0, "inference times": []}
+    ts_prev = 0
+    start_time = time.time()
 
     while True:
+        if event_exit.is_set():
+            break
         while len(det_result_queue) < 1:
             time.sleep(0.001)
         with det_result_queue_mutex:
             ts_input, frame, t_info, mmdet_results = det_result_queue.popleft()
+
 
         pose_results_list = []
         for model_info, pose_history in zip(pose_model_list,
@@ -311,8 +326,13 @@ def inference_pose():
         with pose_result_queue_mutex:
             pose_result_queue.append((ts_input, t_info, pose_results_list))
 
-        event_inference_done.set()
+        inference_data[key]["inference count"] += 1
+        inference_data[key]["inference times"].append(time.time() - start_time)
+        start_time = time.time()
 
+        ts_prev = ts_input
+
+        event_inference_done.set()
 
 def display():
     print('Thread "display" started')
@@ -364,6 +384,7 @@ def display():
                 _ts = time.time()
                 if ts_inference is not None:
                     fps_inference = 1.0 / (_ts - ts_inference)
+
                 ts_inference = _ts
                 t_delay_inference = (_ts - _ts_input) * 1000
 
@@ -508,8 +529,12 @@ def display():
         vid_out.release()
     event_exit.set()
 
+def trusty_sleep(n):
+    start = time.time()
+    while (time.time() - start < n):
+        time.sleep(n - (time.time() - start))
 
-def main(config):
+def main(config, key, run_time):
     global args
     global frame_buffer
     global input_queue, input_queue_mutex
@@ -555,7 +580,7 @@ def main(config):
     else:
         # infer buffer size from the display delay time
         # assume that the maximum video fps is 30
-        buffer_size = round(30 * (1 + max(args.display_delay, 0) / 1000.))
+        buffer_size = 300
     frame_buffer = Queue(maxsize=buffer_size)
 
     # queue of input frames
@@ -576,24 +601,36 @@ def main(config):
     try:
         event_exit = Event()
         event_inference_done = Event()
-        t_input = Thread(target=read_camera, args=())
+        t_input = Thread(target=read_camera, args=(), daemon=True)
         t_det = Thread(target=inference_detection, args=(), daemon=True)
-        t_pose = Thread(target=inference_pose, args=(), daemon=True)
+        t_pose = Thread(target=inference_pose, args=(key, ), daemon=True)
 
         t_input.start()
         t_det.start()
         t_pose.start()
 
         # run display in the main thread
-        display()
+        # display()
         # join the input thread (non-daemon)
-        t_input.join()
+        # t_input.join()
+
+
+
+        trusty_sleep(run_time)
+
+        event_exit.set()
+        
 
     except KeyboardInterrupt:
+        event_exit.set()
         pass
 
+    vid_cap.release()
 
-if __name__ == '__main__':
+    return
+
+
+def load_model_dictionary():
     models_to_test = {
         "vitpose_small":{
             "checkpoint": "pytorch-checkpoint-models/vitpose_small.pth",
@@ -601,30 +638,97 @@ if __name__ == '__main__':
         },
         "hrnet-w48":{
             "checkpoint": "pytorch-checkpoint-models/pose_hrnet_w48_256x192.pth",
-            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrnet_w48_coco_256x192_dark.py"
+            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrnet_w48_coco_256x192.py"
         },
         "hrnet-w32":{
             "checkpoint": "pytorch-checkpoint-models/pose_hrnet_w32_256x192.pth",
-            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrnet_w32_coco_256x192_dark.py"
+            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrnet_w32_coco_256x192.py"
         },
         "vipnas-wholebody":{
             "checkpoint": "https://download.openmmlab.com/mmpose/top_down/vipnas/vipnas_res50_wholebody_256x192_dark-67c0ce35_20211112.pth",
             "config": "configs/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/vipnas_res50_coco_wholebody_256x192_dark.py"
         },
+        "vipnas-coco":{
+            "checkpoint": "pytorch-checkpoint-models/vipnas_res50_coco_256x192.pth",
+            "config": "configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/vipnas_res50_coco_256x192.py"
+        },
         "vitpose-b":{
             "checkpoint": "pytorch-checkpoint-models/vitpose-b.pth",
             "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/ViTPose_base_coco_256x192.py"
         },
+    }
+
+    # These models are to big to run on my laptop and require more than 4GB of memory, the size of my GPU
+    model_too_big_4gb = {
         "vitpose-l":{
             "checkpoint": "pytorch-checkpoint-models/vitpose-l.pth",
             "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/ViTPose_large_coco_256x192.py"
         },
+        "vitpose-h":{
+            "checkpoint": "pytorch-checkpoint-models/vitpose-h.pth",
+            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/ViTPose_huge_coco_256x192.py"
+        },
     }
+    
+    return models_to_test
 
-    for key in models_to_test.keys():
+def analyze_inference_data(inference_data, run_time, cooldown_time):
+    threshold = 5 # seconds
+
+    boxplot_data = []
+    fps_data = []
+    for key in inference_data.keys():
+        filtered_times = []
+        list_times =  inference_data[key]["inference times"]
+        for x in list_times:
+            if x > threshold:
+                continue
+            filtered_times.append(x*1000)
+
+        inference_data[key]["Average inference time"] = np.average(filtered_times) /1000
+
+        inference_data[key]["Average inference fps"] = 1 / inference_data[key]["Average inference time"]
+        fps_data.append(1 / inference_data[key]["Average inference time"])
+        boxplot_data.append(filtered_times)
+
+    fig = plt.figure()
+
+    plt.boxplot(boxplot_data, labels=list(inference_data.keys()))
+    plt.title("Distribution of average inference time")
+    plt.ylabel("time [ms]")
+    plt.show()
+
+
+    fig, ax = plt.subplots()
+    
+    ax.bar(list(inference_data.keys()), fps_data)
+    plt.title(f"FPS per model on COCO (or -Wholebody) on ZenBook15 with GTX1650, run-time: {run_time} s, cooldown-time: {cooldown_time} s")
+    plt.xticks(list(inference_data.keys()))
+    plt.ylabel("FPS")
+    plt.show()
+
+    for key in inference_data.keys():
+
+        del inference_data[key]["inference times"]
+
+    pprint(inference_data)
+
+if __name__ == '__main__':
+    models_to_test = load_model_dictionary()
+
+    run_time = 10
+    cooldown_time = 10
+    
+    for key in tqdm(models_to_test.keys()):
+        trusty_sleep(cooldown_time)
         config = models_to_test[key]
-        print(key)
-        print(config)
-        print(config["checkpoint"])
+        main(config, key, run_time)
 
-        main(config)
+    with open('saved_dictionary.pkl', 'wb') as f:
+        pickle.dump(inference_data, f)
+
+    with open('saved_dictionary.pkl', 'rb') as f:
+        inference_data = pickle.load(f)
+
+    analyze_inference_data(inference_data, run_time, cooldown_time)
+    

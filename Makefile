@@ -1,3 +1,5 @@
+demo:
+	python3 demo/webcam_demo.py
 hrnet_48:
 	python3 demo/webcam_demo.py --human-pose-checkpoint ./pytorch-checkpoint-models/pose_hrnet_w48_256x192.pth --human-pose-config ./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrnet_w48_coco_256x192_dark.py
 hrnet_32:
