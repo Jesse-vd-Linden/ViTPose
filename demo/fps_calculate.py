@@ -632,9 +632,21 @@ def main(config, key, run_time):
 
 def load_model_dictionary():
     models_to_test = {
-        "vitpose_small":{
+        "vitpose-s":{
             "checkpoint": "pytorch-checkpoint-models/vitpose_small.pth",
             "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/ViTPose_small_coco_256x192.py"
+        },
+        "vitpose-s-wholebody":{
+            "checkpoint": "pytorch-checkpoint-models/vitpose+_small_whole.pth",
+            "config": "./configs/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/ViTPose_small_wholebody_256x192.py"
+        },
+        "vitpose-b":{
+            "checkpoint": "pytorch-checkpoint-models/vitpose-b.pth",
+            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/ViTPose_base_coco_256x192.py"
+        },
+        "vitpose-b-wholebody":{
+            "checkpoint": "pytorch-checkpoint-models/vitpose+_base_whole.pth",
+            "config": "./configs/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/ViTPose_base_wholebody_256x192.py"
         },
         "hrnet-w48":{
             "checkpoint": "pytorch-checkpoint-models/pose_hrnet_w48_256x192.pth",
@@ -644,17 +656,21 @@ def load_model_dictionary():
             "checkpoint": "pytorch-checkpoint-models/pose_hrnet_w32_256x192.pth",
             "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrnet_w32_coco_256x192.py"
         },
-        "vipnas-wholebody":{
-            "checkpoint": "https://download.openmmlab.com/mmpose/top_down/vipnas/vipnas_res50_wholebody_256x192_dark-67c0ce35_20211112.pth",
-            "config": "configs/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/vipnas_res50_coco_wholebody_256x192_dark.py"
+        "hrformer-small":{
+            "checkpoint": "pytorch-checkpoint-models/hrformer_hrt_small_coco_256x192.pth",
+            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrformer_small_coco_256x192.py"
         },
-        "vipnas-coco":{
+        "hrformer-base":{
+            "checkpoint": "pytorch-checkpoint-models/hrformer_hrt_base_coco_256x192.pth",
+            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrformer_base_coco_256x192.py"
+        },
+        "vipnas-res50":{
             "checkpoint": "pytorch-checkpoint-models/vipnas_res50_coco_256x192.pth",
             "config": "configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/vipnas_res50_coco_256x192.py"
         },
-        "vitpose-b":{
-            "checkpoint": "pytorch-checkpoint-models/vitpose-b.pth",
-            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/ViTPose_base_coco_256x192.py"
+        "vipnas-res50-wholebody":{
+            "checkpoint": "https://download.openmmlab.com/mmpose/top_down/vipnas/vipnas_res50_wholebody_256x192_dark-67c0ce35_20211112.pth",
+            "config": "configs/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/vipnas_res50_coco_wholebody_256x192_dark.py"
         },
     }
 
@@ -672,20 +688,22 @@ def load_model_dictionary():
     
     return models_to_test
 
-def analyze_inference_data(inference_data, run_time, cooldown_time):
-    threshold = 5 # seconds
+def reject_outliers(data, m = 0.5):
+    data = np.array(data)
+    d = np.abs(data - np.median(data))
+    mdev = np.median(d)
+    s = d/mdev if mdev else 0.
+    return data[s<m]
 
+def analyze_inference_data(inference_data, run_time, cooldown_time):
     boxplot_data = []
     fps_data = []
     for key in inference_data.keys():
-        filtered_times = []
         list_times =  inference_data[key]["inference times"]
-        for x in list_times:
-            if x > threshold:
-                continue
-            filtered_times.append(x*1000)
+        filtered_times = reject_outliers(list_times)
+        filtered_times *= 1000
 
-        inference_data[key]["Average inference time"] = np.average(filtered_times) /1000
+        inference_data[key]["Average inference time"] = np.average(filtered_times) / 1000
 
         inference_data[key]["Average inference fps"] = 1 / inference_data[key]["Average inference time"]
         fps_data.append(1 / inference_data[key]["Average inference time"])
@@ -716,10 +734,13 @@ def analyze_inference_data(inference_data, run_time, cooldown_time):
 if __name__ == '__main__':
     models_to_test = load_model_dictionary()
 
-    run_time = 10
-    cooldown_time = 10
+    run_time = 120
+    cooldown_time = 60
+
+    keys =  list(models_to_test.keys())
+    keys.reverse()
     
-    for key in tqdm(models_to_test.keys()):
+    for key in tqdm(keys):
         trusty_sleep(cooldown_time)
         config = models_to_test[key]
         main(config, key, run_time)
@@ -727,8 +748,7 @@ if __name__ == '__main__':
     with open('saved_dictionary.pkl', 'wb') as f:
         pickle.dump(inference_data, f)
 
-    with open('saved_dictionary.pkl', 'rb') as f:
-        inference_data = pickle.load(f)
+    # with open('saved_dictionary.pkl', 'rb') as f:
+    #     inference_data = pickle.load(f)
 
     analyze_inference_data(inference_data, run_time, cooldown_time)
-    
