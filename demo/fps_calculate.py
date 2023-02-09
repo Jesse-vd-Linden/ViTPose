@@ -715,7 +715,7 @@ if __name__ == '__main__':
 
     keys =  list(models_to_test.keys())
     keys.reverse()
-    keys = ["vitpose-s-wholebody"]
+    keys = ["vitpose-b-wholebody"]
     
     for key in tqdm(keys):
         # trusty_sleep(cooldown_time)

@@ -25,7 +25,7 @@ mediapipe_holistic:
 mediapipe_hand:
 	python3 google_mediapipe/hand.py
 mediapipe_body:
-	python3 google_mediapipe/body.py
+	python3.8 google_mediapipe/body.py
 mediapipe_face:
 	python3 google_mediapipe/face.py
 mediapipe_face_detect:
