@@ -247,6 +247,8 @@ def inference_detection():
     _ts_last = None  # timestamp when last inference was done
 
     while True:
+        if event_exit.is_set():
+            break
         while len(input_queue) < 1:
             time.sleep(0.001)
         with input_queue_mutex:
@@ -269,7 +271,6 @@ def inference_pose(key):
     print('Thread "pose" started')
     stop_watch = StopWatch(window=10)
     inference_data[key] = {"inference count": 0, "inference times": []}
-    ts_prev = 0
     start_time = time.time()
 
     while True:
@@ -330,13 +331,11 @@ def inference_pose(key):
         inference_data[key]["inference times"].append(time.time() - start_time)
         start_time = time.time()
 
-        ts_prev = ts_input
-
         event_inference_done.set()
 
 def display():
     print('Thread "display" started')
-    stop_watch = StopWatch(window=1)
+    stop_watch = StopWatch(window=10)
 
     # initialize result status
     ts_inference = None  # timestamp of the latest inference result
@@ -356,16 +355,13 @@ def display():
     print('"s": Toggle the sunglasses effect.')
     print('"b": Toggle the bug-eye effect.')
     print('"Q", "q" or Esc: Exit.')
-
-
-    ax = plt.subplot(1,1,1)
-    ts_input, frame = frame_buffer.get()
-    im = ax.imshow(frame)
-    # plt.xticks([]), plt.yticks([])  # to hide tick values on X and Y axis
-    plt.ion()
+    
 
 
     while True:
+        if event_exit.is_set():
+            break
+
         with stop_watch.timeit('_FPS_'):
             # acquire a frame from buffer
             ts_input, frame = frame_buffer.get()
@@ -506,28 +502,21 @@ def display():
                 vid_out.write(img)
 
             # display
-            # cv2.imshow('mmpose webcam demo', img)
-            im.set_data(img)
-            plt.pause(0.00000001)
-            # print(".", end="")
+            cv2.imshow('mmpose webcam demo', img)
+            keyboard_input = cv2.waitKey(1)
+            if keyboard_input in (27, ord('q'), ord('Q')):
+                break
+            elif keyboard_input == ord('s'):
+                args.sunglasses = not args.sunglasses
+            elif keyboard_input == ord('b'):
+                args.bugeye = not args.bugeye
+            elif keyboard_input == ord('v'):
+                args.vis_mode = (args.vis_mode + 1) % 3
 
-            # keyboard_input = cv2.waitKey(1)
-            # if keyboard_input in (27, ord('q'), ord('Q')):
-            #     break
-            # elif keyboard_input == ord('s'):
-            #     args.sunglasses = not args.sunglasses
-            # elif keyboard_input == ord('b'):
-            #     args.bugeye = not args.bugeye
-            # elif keyboard_input == ord('v'):
-            #     args.vis_mode = (args.vis_mode + 1) % 3
-
-    # cv2.destroyAllWindows()
-    plt.ioff()
-    plt.show()
+    cv2.destroyAllWindows()
 
     if vid_out is not None:
         vid_out.release()
-    event_exit.set()
 
 def trusty_sleep(n):
     start = time.time()
@@ -580,7 +569,7 @@ def main(config, key, run_time):
     else:
         # infer buffer size from the display delay time
         # assume that the maximum video fps is 30
-        buffer_size = 300
+        buffer_size = 3000
     frame_buffer = Queue(maxsize=buffer_size)
 
     # queue of input frames
@@ -656,11 +645,11 @@ def load_model_dictionary():
             "checkpoint": "pytorch-checkpoint-models/pose_hrnet_w32_256x192.pth",
             "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrnet_w32_coco_256x192.py"
         },
-        "hrformer-small":{
+        "hrformer-s":{
             "checkpoint": "pytorch-checkpoint-models/hrformer_hrt_small_coco_256x192.pth",
             "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrformer_small_coco_256x192.py"
         },
-        "hrformer-base":{
+        "hrformer-b":{
             "checkpoint": "pytorch-checkpoint-models/hrformer_hrt_base_coco_256x192.pth",
             "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrformer_base_coco_256x192.py"
         },
@@ -671,6 +660,10 @@ def load_model_dictionary():
         "vipnas-res50-wholebody":{
             "checkpoint": "https://download.openmmlab.com/mmpose/top_down/vipnas/vipnas_res50_wholebody_256x192_dark-67c0ce35_20211112.pth",
             "config": "configs/wholebody/2d_kpt_sview_rgb_img/topdown_heatmap/coco-wholebody/vipnas_res50_coco_wholebody_256x192_dark.py"
+        },
+        "vitpose-l":{
+            "checkpoint": "pytorch-checkpoint-models/vitpose-l.pth",
+            "config": "./configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/ViTPose_large_coco_256x192.py"
         },
     }
 
@@ -709,24 +702,7 @@ def analyze_inference_data(inference_data, run_time, cooldown_time):
         fps_data.append(1 / inference_data[key]["Average inference time"])
         boxplot_data.append(filtered_times)
 
-    fig = plt.figure()
-
-    plt.boxplot(boxplot_data, labels=list(inference_data.keys()))
-    plt.title("Distribution of average inference time")
-    plt.ylabel("time [ms]")
-    plt.show()
-
-
-    fig, ax = plt.subplots()
-    
-    ax.bar(list(inference_data.keys()), fps_data)
-    plt.title(f"FPS per model on COCO (or -Wholebody) on ZenBook15 with GTX1650, run-time: {run_time} s, cooldown-time: {cooldown_time} s")
-    plt.xticks(list(inference_data.keys()))
-    plt.ylabel("FPS")
-    plt.show()
-
     for key in inference_data.keys():
-
         del inference_data[key]["inference times"]
 
     pprint(inference_data)
@@ -734,21 +710,27 @@ def analyze_inference_data(inference_data, run_time, cooldown_time):
 if __name__ == '__main__':
     models_to_test = load_model_dictionary()
 
-    run_time = 120
+    run_time = 60
     cooldown_time = 60
 
     keys =  list(models_to_test.keys())
     keys.reverse()
+    keys = ["vitpose-s-wholebody"]
     
     for key in tqdm(keys):
-        trusty_sleep(cooldown_time)
+        # trusty_sleep(cooldown_time)
         config = models_to_test[key]
         main(config, key, run_time)
 
-    with open('saved_dictionary.pkl', 'wb') as f:
-        pickle.dump(inference_data, f)
+    print("Inference data")
+    print(inference_data)
+    print("--------------")
+    # with open('saved_dictionary.pkl', 'wb') as f:
+    #     pickle.dump(inference_data, f)
+
 
     # with open('saved_dictionary.pkl', 'rb') as f:
     #     inference_data = pickle.load(f)
+    # print(inference_data)
 
     analyze_inference_data(inference_data, run_time, cooldown_time)

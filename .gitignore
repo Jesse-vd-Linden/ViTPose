@@ -162,3 +162,4 @@ imgs/
 #.idea/
 
 pytorch-checkpoint-models/
+data/

@@ -1,11 +1,10 @@
-# Copyright (c) OpenMMLab. All rights reserved
-import matplotlib.pyplot as plt
-
+# Copyright (c) OpenMMLab. All rights reserved.
 import argparse
 import time
 from collections import deque
 from queue import Queue
 from threading import Event, Lock, Thread
+
 import cv2
 import numpy as np
 
@@ -13,9 +12,6 @@ from mmpose.apis import (get_track_id, inference_top_down_pose_model,
                          init_pose_model, vis_pose_result)
 from mmpose.core import apply_bugeye_effect, apply_sunglasses_effect
 from mmpose.utils import StopWatch
-
-from visualize_results import visualize_pose
-
 
 try:
     from mmdet.apis import inference_detector, init_detector
@@ -124,7 +120,7 @@ def parse_args():
     parser.add_argument(
         '--out-video-fps',
         type=int,
-        default=120,
+        default=20,
         help='Set the FPS of the output video file.')
 
     parser.add_argument(
@@ -137,7 +133,7 @@ def parse_args():
     parser.add_argument(
         '--inference-fps',
         type=int,
-        default=30,
+        default=10,
         help='Maximum inference FPS. This is to limit the resource consuming '
         'especially when the detection and pose model are lightweight and '
         'very fast. Default: 10.')
@@ -152,7 +148,6 @@ def parse_args():
 
     parser.add_argument(
         '--synchronous-mode',
-        default=True,
         action='store_true',
         help='Enable synchronous mode that video I/O and inference will be '
         'temporally aligned. Note that this will reduce the display FPS.')
@@ -162,7 +157,6 @@ def parse_args():
 
 def process_mmdet_results(mmdet_results, class_names=None, cat_ids=1):
     """Process mmdet results to mmpose input format.
-
     Args:
         mmdet_results: raw output of mmdet model
         class_names: class names of mmdet model
@@ -316,7 +310,7 @@ def inference_pose():
 
 def display():
     print('Thread "display" started')
-    stop_watch = StopWatch(window=1)
+    stop_watch = StopWatch(window=10)
 
     # initialize result status
     ts_inference = None  # timestamp of the latest inference result
@@ -336,14 +330,6 @@ def display():
     print('"s": Toggle the sunglasses effect.')
     print('"b": Toggle the bug-eye effect.')
     print('"Q", "q" or Esc: Exit.')
-
-
-    ax = plt.subplot(1,1,1)
-    ts_input, frame = frame_buffer.get()
-    im = ax.imshow(frame)
-    # plt.xticks([]), plt.yticks([])  # to hide tick values on X and Y axis
-    plt.ion()
-
 
     while True:
         with stop_watch.timeit('_FPS_'):
@@ -387,10 +373,7 @@ def display():
                             dataset=dataset_name,
                             kpt_score_thr=1e7,
                             bbox_color=bbox_color)
-                        print(type(img))
                     elif args.vis_mode == 2:
-                        # print("Pose results", type(pose_results))
-                        # img =  visualize_pose(img, pose_results)
                         img = vis_pose_result(
                             pose_model,
                             img,
@@ -485,25 +468,18 @@ def display():
                 vid_out.write(img)
 
             # display
-            # cv2.imshow('mmpose webcam demo', img)
-            im.set_data(img)
-            plt.pause(0.00000001)
-            # print(".", end="")
+            cv2.imshow('mmpose webcam demo', img)
+            keyboard_input = cv2.waitKey(1)
+            if keyboard_input in (27, ord('q'), ord('Q')):
+                break
+            elif keyboard_input == ord('s'):
+                args.sunglasses = not args.sunglasses
+            elif keyboard_input == ord('b'):
+                args.bugeye = not args.bugeye
+            elif keyboard_input == ord('v'):
+                args.vis_mode = (args.vis_mode + 1) % 3
 
-            # keyboard_input = cv2.waitKey(1)
-            # if keyboard_input in (27, ord('q'), ord('Q')):
-            #     break
-            # elif keyboard_input == ord('s'):
-            #     args.sunglasses = not args.sunglasses
-            # elif keyboard_input == ord('b'):
-            #     args.bugeye = not args.bugeye
-            # elif keyboard_input == ord('v'):
-            #     args.vis_mode = (args.vis_mode + 1) % 3
-
-    # cv2.destroyAllWindows()
-    plt.ioff()
-    plt.show()
-
+    cv2.destroyAllWindows()
     if vid_out is not None:
         vid_out.release()
     event_exit.set()
@@ -542,7 +518,18 @@ def main():
             'bbox_color': (148, 139, 255),
         }
         pose_model_list.append(model_info)
-
+    if args.enable_animal_pose:
+        pose_model = init_pose_model(
+            args.animal_pose_config,
+            args.animal_pose_checkpoint,
+            device=args.device.lower())
+        model_info = {
+            'name': 'AnimalPose',
+            'model': pose_model,
+            'cat_ids': args.animal_det_ids,
+            'bbox_color': 'cyan',
+        }
+        pose_model_list.append(model_info)
 
     # store pose history for pose tracking
     pose_history_list = []
